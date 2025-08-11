@@ -1,9 +1,10 @@
 #!/bin/bash
 
 #-----------------------------------------------------------------------------
-# Python 应用通用管理脚本 (全自动安装中文版)
+# Python 应用通用管理脚本 (Hugging Face 兼容中文版)
 #
-# 功能:
+# 特性:
+#   - 兼容 Hugging Face Spaces 等轻量级、非完整的系统环境。
 #   - 首次运行全自动完成设置、配置、启动。
 #   - 后续运行提供管理菜单 (启动/停止/清理等)。
 #-----------------------------------------------------------------------------
@@ -46,21 +47,236 @@ check_dependencies() {
 
 # 2. 设置 Python 虚拟环境并安装依赖
 setup_environment() {
-    # 如果 requirements.txt 不存在，则创建它
     if [ ! -f "$REQ_FILE" ]; then
         echo -e "${CYAN}:: 正在创建依赖文件 ${REQ_FILE}...${NC}"
         echo "requests" > "$REQ_FILE"
         echo -e "${GREEN}✓ ${REQ_FILE} 已创建。${NC}"
     fi
 
-    # 创建 Python 虚拟环境
     echo -e "${CYAN}:: 正在 './${VENV_DIR}' 目录中创建 Python 虚拟环境...${NC}"
     python3 -m venv "$VENV_DIR"
     
-    # 安装依赖
     echo -e "${CYAN}:: 正在从 ${REQ_FILE} 安装依赖库...${NC}"
     # shellcheck source=/dev/null
     source "${VENV_DIR}/bin/activate"
+    pip install -r "$REQ_FILE"
+    deactivate
+    echo -e "${GREEN}✓ Python 环境设置完成。${NC}"
+}
+
+# 3. 用于配置 .env 文件的交互式向导
+configure_env() {
+    echo -e "${CYAN}:: 启动环境变量配置向导...${NC}"
+    echo "提示：直接按 [回车] 将使用括号 [] 中显示的默认值。"
+
+    declare -A VARS
+    VARS=(
+        ["UPLOAD_URL"]="'' # (可选) 节点或订阅的上传地址"
+        ["PROJECT_URL"]="'' # (可选) 用于自动保活或上传订阅的项目URL"
+        ["AUTO_ACCESS"]="'false' # (可选) 是否开启自动保活 (true/false)"
+        ["FILE_PATH"]="'./.cache' # (可选) 运行时缓存目录"
+        ["SUB_PATH"]="'sub' # (可选) 订阅路径的访问令牌"
+        ["UUID"]="'20e6e496-cf19-45c8-b883-14f5e11cd9f1' # (可选) 你的 VLESS/VMess UUID"
+        ["NEZHA_SERVER"]="'' # (可选) 哪吒面板服务器地址 (例如: domain.com:8008)"
+        ["NEZHA_PORT"]="'' # (可选) 哪吒v0的Agent端口 (v1版请留空)"
+        ["NEZHA_KEY"]="'' # (可选) 哪吒面板的密钥或Secret"
+        ["ARGO_DOMAIN"]="'' # (可选) Argo隧道的固定域名"
+        ["ARGO_AUTH"]="'' # (可选) Argo隧道的JSON或Token"
+        ["ARGO_PORT"]="'8001' # (可选) Argo隧道的内部端口"
+        ["CFIP"]="'www.visa.com.tw' # (可选) 优选的Cloudflare IP或域名"
+        ["CFPORT"]="'443' # (可选) 优选的Cloudflare端口"
+        ["NAME"]="'Vls' # (可选) 节点名称的前缀"
+        ["CHAT_ID"]="'' # (可选) 用于推送通知的Telegram Chat ID"
+        ["BOT_TOKEN"]="'' # (可选) 用于推送通知的Telegram Bot Token"
+        ["PORT"]="'3000' # (可选) HTTP服务的监听端口"
+    )
+
+    > "$ENV_FILE"
+
+    for key in "${!VARS[@]}"; do
+        value_desc=${VARS[$key]}
+        default_val=$(echo "$value_desc" | cut -d'#' -f1 | tr -d " '")
+        desc=$(echo "$value_desc" | cut -d'#' -f2-)
+
+        read -p "$(echo -e ${GREEN}"-> 请输入 ${key} 的值 ${NC}(${desc}) [${default_val}]: ")" user_input
+        final_val=${user_input:-$default_val}
+        echo "${key}=\"${final_val}\"" >> "$ENV_FILE"
+    done
+
+    echo -e "${GREEN}✓ 配置已成功保存至 ${ENV_FILE}。${NC}"
+}
+
+# 4. 启动应用程序及其所有后台进程
+#    $1: 运行模式 ("auto" 或 "manual")
+start_app() {
+    local mode=$1
+    if [ -f "$PID_FILE" ]; then
+        echo -e "${YELLOW}应用似乎已在运行 (进程ID: $(cat $PID_FILE))。${NC}"
+        if [ "$mode" == "manual" ]; then read -p "按 [回车] 返回主菜单。" ; fi
+        return
+    fi
+
+    echo -e "${CYAN}:: 正在启动应用...${NC}"
+    # shellcheck source=/dev/null
+    source "${VENV_DIR}/bin/activate"
+    
+    if [ -f "$ENV_FILE" ]; then
+        export $(grep -v '^#' "$ENV_FILE" | xargs)
+    fi
+
+    nohup python3 "$APP_FILE" > "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+    
+    deactivate
+    
+    sleep 2
+    if [ -f "$PID_FILE" ] && ps -p "$(cat $PID_FILE)" > /dev/null; then
+        echo -e "${GREEN}✓ 应用启动成功 (进程ID: $(cat $PID_FILE))。${NC}"
+        echo "   日志文件位于: ${LOG_FILE}"
+    else
+        echo -e "${RED}错误: 应用启动失败。请检查 ${LOG_FILE} 文件以获取详细信息。${NC}"
+        rm -f "$PID_FILE"
+    fi
+
+    if [ "$mode" == "manual" ]; then read -p "按 [回车] 返回主菜单。" ; fi
+}
+
+# 5. 停止主应用及其衍生的所有后台进程 (兼容性版本)
+stop_app() {
+    echo -e "${CYAN}:: 正在停止所有相关进程...${NC}"
+    local stopped_count=0
+
+    # 停止主Python脚本
+    if [ -f "$PID_FILE" ]; then
+        pid=$(cat "$PID_FILE")
+        if ps -p "$pid" > /dev/null; then
+            kill -9 "$pid"
+            echo "   - 主脚本 (进程ID: $pid) 已停止。"
+            stopped_count=$((stopped_count + 1))
+        fi
+        rm -f "$PID_FILE"
+    fi
+
+    # 终止衍生的进程
+    for proc_name in web bot npm php; do
+        # 使用 ps, grep, awk 安全地查找并停止进程
+        # grep "[$p]" 是一个技巧，可以防止 grep 命令找到它自己
+        pids_to_kill=$(ps -ef | grep "[${proc_name:0:1}]${proc_name:1}" | awk '{print $2}')
+        if [ -n "$pids_to_kill" ]; then
+            for pid in $pids_to_kill; do
+                kill -9 "$pid"
+                echo "   - 衍生进程 '$proc_name' (进程ID: $pid) 已停止。"
+                stopped_count=$((stopped_count + 1))
+            done
+        fi
+    done
+    
+    if [ "$stopped_count" -eq 0 ]; then
+        echo -e "${YELLOW}未发现正在运行的相关进程。${NC}"
+    else
+        echo -e "${GREEN}✓ 所有相关进程均已停止。${NC}"
+    fi
+    read -p "按 [回车] 返回主菜单。"
+}
+
+
+# 6. 清理所有生成的文件和目录
+cleanup() {
+    echo -e "${RED}警告: 此操作将停止所有进程并永久删除以下内容：${NC}"
+    echo "  - Python虚拟环境 ('$VENV_DIR')"
+    echo "  - 运行时缓存目录 ('$DEFAULT_CACHE_DIR')"
+    echo "  - 所有日志和配置文件 (.env, .pid, .log, requirements.txt)"
+    read -p "您确定要继续吗? [y/N]: " choice
+    if [[ "$choice" != "y" ]] && [[ "$choice" != "Y" ]]; then
+        echo "清理操作已取消。"
+        read -p "按 [回车] 返回。"
+        return
+    fi
+    
+    echo -e "${CYAN}:: 正在执行彻底清理...${NC}"
+    # 首先停止所有进程
+    stop_app > /dev/null 2>&1
+
+    # 删除文件和目录
+    rm -rf "$VENV_DIR" "$DEFAULT_CACHE_DIR" "$ENV_FILE" "$PID_FILE" "$LOG_FILE" "$REQ_FILE"
+    echo -e "${GREEN}✓ 清理完成。${NC}"
+    read -p "按 [回车] 退出脚本。"
+    exit 0
+}
+
+
+# --- 主菜单 (用于后续运行) ---
+main_menu() {
+    while true; do
+        clear
+        echo -e "${CYAN}=======================================${NC}"
+        echo -e "${CYAN}         应用管理菜单      ${NC}"
+        echo -e "${CYAN}=======================================${NC}"
+        echo -e " ${GREEN}1.${NC} ${CYAN}启动${NC} 应用服务"
+        echo -e " ${GREEN}2.${NC} ${RED}停止${NC} 应用服务"
+        echo -e " ${GREEN}3.${NC} 重新配置环境变量"
+        echo -e " ${GREEN}4.${NC} 查看实时日志 (按 Ctrl+C 退出)"
+        echo -e " ${GREEN}5.${NC} ${RED}卸载并清理所有文件${NC}"
+        echo -e " ${YELLOW}6.${NC} 退出脚本"
+        echo
+        
+        if [ -f "$PID_FILE" ] && ps -p "$(cat $PID_FILE)" > /dev/null; then
+            echo -e "当前状态: ${GREEN}运行中 (进程ID: $(cat $PID_FILE))${NC}"
+        else
+            echo -e "当前状态: ${RED}已停止${NC}"
+        fi
+
+        read -p "请输入您的选择 [1-6]: " choice
+
+        case $choice in
+            1) start_app "manual" ;;
+            2) stop_app ;;
+            3) configure_env; read -p "配置完成，按[回车]返回" ;;
+            4) clear; echo "正在显示实时日志... 按 Ctrl+C 组合键可随时退出。"; tail -f "$LOG_FILE" ;;
+            5) cleanup ;;
+            6) exit 0 ;;
+            *) echo -e "${RED}无效输入，请重新选择。${NC}"; sleep 1 ;;
+        esac
+    done
+}
+
+
+# --- 脚本主逻辑 ---
+# 通过检查虚拟环境是否存在来判断是否为首次运行
+if [ ! -d "$VENV_DIR" ]; then
+    # --- 首次运行的自动化流程 ---
+    clear
+    echo -e "${CYAN}======================================================${NC}"
+    echo -e "${CYAN}    欢迎使用! 检测到首次运行，将开始全自动安装...    ${NC}"
+    echo -e "${CYAN}======================================================${NC}"
+    
+    # 步骤 1: 检查环境
+    check_dependencies
+    echo
+    # 步骤 2: 创建Python环境并安装依赖
+    setup_environment
+    echo
+    # 步骤 3: 交互式配置
+    configure_env
+    echo
+    # 步骤 4: 自动启动应用
+    echo -e "${CYAN}--- 正在自动启动应用 ---${NC}"
+    start_app "auto" # 使用 "auto" 模式，不暂停
+    
+    echo -e "\n${GREEN}====================== 首次启动完成 ======================${NC}"
+    echo -e "${GREEN}✓ 应用已在后台开始运行！${NC}"
+    echo -e "它现在会自动下载所需组件并生成订阅链接，这可能需要1-2分钟。"
+    echo
+    echo -e "您可以立即重新运行此脚本 (${YELLOW}./manage.sh${NC})，然后:"
+    echo -e "  - 选择“${CYAN}查看实时日志${NC}”来监控进度。"
+    echo -e "  - 当日志中出现订阅链接时，代表服务已就绪。"
+    echo -e "  - 使用菜单中的其他选项来管理您的应用（如停止或卸载）。"
+    echo -e "=========================================================="
+
+else
+    # --- 后续运行，直接显示管理菜单 ---
+    main_menu
+fi    source "${VENV_DIR}/bin/activate"
     pip install -r "$REQ_FILE"
     deactivate
     echo -e "${GREEN}✓ Python 环境设置完成。${NC}"
