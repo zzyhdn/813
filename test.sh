@@ -235,4 +235,4 @@ echo -e "${YELLOW}当前工作目录：$(pwd)${NC}"
 echo -e "${YELLOW}直接运行Python脚本...${NC}"
 echo
 
-python3 main.py
+python main.py
