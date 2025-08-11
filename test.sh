@@ -1,66 +1,175 @@
 #!/bin/bash
 
-# ===================================================================================
-# Python 应用一体化安装与管理脚本 (最终交互菜单版)
-#
-# 功能:
-#   - 首次运行：自动从GitHub下载、交互式配置并设置环境。
-#   - 后续运行：提供功能齐全的交互式菜单管理应用的启停、日志和卸载。
-#
-# 使用方法:
-#   1. 在一个空目录中，运行 bash <(curl -sL https://raw.githubusercontent.com/eoovve/vless/main/install.sh)
-#      或手动下载此脚本后运行: bash install.sh
-#   2. 根据首次运行的提示完成配置。
-#   3. 再次运行 bash install.sh 即可进入管理菜单。
-# ===================================================================================
-
-# --- 脚本配置 ---
-# 颜色代码
+# 颜色定义
+RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-RED='\033[0;31m'
-NC='\033[0m' # 无颜色
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-# 目标应用的GitHub Raw URL
-APP_URL="https://raw.githubusercontent.com/eooce/python-xray-argo/main/app.py"
+# 清屏
+clear
 
-# 本地文件名及环境
-APP_FILE="app.py"
-REQ_FILE="requirements.txt"
-VENV_DIR="venv"
-PID_FILE="app.pid"
-LOG_FILE="app.log"
-DEFAULT_CACHE_DIR="./.cache"
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}    Python Xray Argo 交互式配置脚本    ${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo
 
-# --- 核心功能函数 ---
+# 检查并安装依赖
+echo -e "${BLUE}检查并安装依赖...${NC}"
+if ! command -v python3 &> /dev/null; then
+    echo -e "${YELLOW}正在安装 Python3...${NC}"
+    sudo apt-get update && sudo apt-get install -y python3 python3-pip
+fi
 
-# 检查系统依赖
-check_dependencies() {
-    echo -e "${CYAN}:: 正在检查所需工具 (curl, python3, pip)...${NC}"
-    local missing=0
-    if ! command -v curl &> /dev/null; then echo -e "${RED}错误: 未找到 'curl'。${NC}"; missing=1; fi
-    if ! command -v python3 &> /dev/null; then echo -e "${RED}错误: 未找到 'python3'。${NC}"; missing=1; fi
-    if ! command -v pip3 &> /dev/null; then echo -e "${RED}错误: 未找到 'pip3'。${NC}"; missing=1; fi
-    [ "$missing" -eq 1 ] && echo -e "${RED}请先安装以上缺失的工具。${NC}" && exit 1
-    echo -e "${GREEN}✓ 依赖检查通过。${NC}"
-}
+if ! python3 -c "import requests" &> /dev/null; then
+    echo -e "${YELLOW}正在安装 Python 依赖...${NC}"
+    pip3 install requests
+fi
 
-# 下载 app.py
-download_app() {
-    echo -e "${CYAN}:: 正在从GitHub下载最新的 ${APP_FILE}...${NC}"
-    if curl -o "$APP_FILE" -L "$APP_URL"; then
-        echo -e "${GREEN}✓ ${APP_FILE} 下载成功。${NC}"
-    else
-        echo -e "${RED}✗ ${APP_FILE} 下载失败！请检查网络或URL: ${APP_URL}${NC}"
+# 下载项目文件
+if [ ! -f "main.py" ]; then
+    echo -e "${BLUE}下载项目文件...${NC}"
+    wget -q https://raw.githubusercontent.com/eooce/python-xray-argo/main/main.py -O main.py
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}下载失败，请检查网络连接${NC}"
         exit 1
     fi
-}
+fi
 
-# 配置 app.py
-configure_app() {
-    echo -e "${CYAN}:: 启动应用配置向导...${NC}"
-    echo "接下来，请输入您的配置信息。直接按[回车]将保留文件中的当前值。"
+echo -e "${GREEN}依赖安装完成！${NC}"
+echo
+
+# 交互式配置
+echo -e "${BLUE}开始交互式配置...${NC}"
+echo
+
+# UUID配置
+read -p "请输入 UUID (留空使用默认): " UUID_INPUT
+if [ -n "$UUID_INPUT" ]; then
+    sed -i "s/UUID = os.environ.get('UUID', '20e6e496-cf19-45c8-b883-14f5e11cd9f1')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" main.py
+    echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
+fi
+
+# 节点名称配置
+read -p "请输入节点名称 (留空使用默认 'Vls'): " NAME_INPUT
+if [ -n "$NAME_INPUT" ]; then
+    sed -i "s/NAME = os.environ.get('NAME', 'Vls')/NAME = os.environ.get('NAME', '$NAME_INPUT')/" main.py
+    echo -e "${GREEN}节点名称已设置为: $NAME_INPUT${NC}"
+fi
+
+# 端口配置
+read -p "请输入服务端口 (留空使用默认 3000): " PORT_INPUT
+if [ -n "$PORT_INPUT" ]; then
+    sed -i "s/PORT = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or 3000)/PORT = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or $PORT_INPUT)/" main.py
+    echo -e "${GREEN}端口已设置为: $PORT_INPUT${NC}"
+fi
+
+# 优选IP配置
+read -p "请输入优选IP/域名 (留空使用默认 'www.visa.com.tw'): " CFIP_INPUT
+if [ -n "$CFIP_INPUT" ]; then
+    sed -i "s/CFIP = os.environ.get('CFIP', 'www.visa.com.tw')/CFIP = os.environ.get('CFIP', '$CFIP_INPUT')/" main.py
+    echo -e "${GREEN}优选IP已设置为: $CFIP_INPUT${NC}"
+fi
+
+# 优选端口配置
+read -p "请输入优选端口 (留空使用默认 443): " CFPORT_INPUT
+if [ -n "$CFPORT_INPUT" ]; then
+    sed -i "s/CFPORT = int(os.environ.get('CFPORT', '443'))/CFPORT = int(os.environ.get('CFPORT', '$CFPORT_INPUT'))/" main.py
+    echo -e "${GREEN}优选端口已设置为: $CFPORT_INPUT${NC}"
+fi
+
+# Argo端口配置
+read -p "请输入 Argo 端口 (留空使用默认 8001): " ARGO_PORT_INPUT
+if [ -n "$ARGO_PORT_INPUT" ]; then
+    sed -i "s/ARGO_PORT = int(os.environ.get('ARGO_PORT', '8001'))/ARGO_PORT = int(os.environ.get('ARGO_PORT', '$ARGO_PORT_INPUT'))/" main.py
+    echo -e "${GREEN}Argo端口已设置为: $ARGO_PORT_INPUT${NC}"
+fi
+
+# 订阅路径配置
+read -p "请输入订阅路径 (留空使用默认 'sub'): " SUB_PATH_INPUT
+if [ -n "$SUB_PATH_INPUT" ]; then
+    sed -i "s/SUB_PATH = os.environ.get('SUB_PATH', 'sub')/SUB_PATH = os.environ.get('SUB_PATH', '$SUB_PATH_INPUT')/" main.py
+    echo -e "${GREEN}订阅路径已设置为: $SUB_PATH_INPUT${NC}"
+fi
+
+# 高级配置选项
+echo
+echo -e "${YELLOW}是否配置高级选项? (y/n)${NC}"
+read -p "> " ADVANCED_CONFIG
+
+if [ "$ADVANCED_CONFIG" = "y" ] || [ "$ADVANCED_CONFIG" = "Y" ]; then
+    # 上传URL配置
+    read -p "请输入上传URL (留空跳过): " UPLOAD_URL_INPUT
+    if [ -n "$UPLOAD_URL_INPUT" ]; then
+        sed -i "s|UPLOAD_URL = os.environ.get('UPLOAD_URL', '')|UPLOAD_URL = os.environ.get('UPLOAD_URL', '$UPLOAD_URL_INPUT')|" main.py
+        echo -e "${GREEN}上传URL已设置${NC}"
+    fi
+
+    # 项目URL配置
+    read -p "请输入项目URL (留空跳过): " PROJECT_URL_INPUT
+    if [ -n "$PROJECT_URL_INPUT" ]; then
+        sed -i "s|PROJECT_URL = os.environ.get('PROJECT_URL', '')|PROJECT_URL = os.environ.get('PROJECT_URL', '$PROJECT_URL_INPUT')|" main.py
+        echo -e "${GREEN}项目URL已设置${NC}"
+    fi
+
+    # 自动保活配置
+    echo -e "${YELLOW}是否启用自动保活? (y/n)${NC}"
+    read -p "> " AUTO_ACCESS_INPUT
+    if [ "$AUTO_ACCESS_INPUT" = "y" ] || [ "$AUTO_ACCESS_INPUT" = "Y" ]; then
+        sed -i "s/AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'false').lower() == 'true'/AUTO_ACCESS = os.environ.get('AUTO_ACCESS', 'true').lower() == 'true'/" main.py
+        echo -e "${GREEN}自动保活已启用${NC}"
+    fi
+
+    # 哪吒配置
+    read -p "请输入哪吒服务器地址 (留空跳过): " NEZHA_SERVER_INPUT
+    if [ -n "$NEZHA_SERVER_INPUT" ]; then
+        sed -i "s|NEZHA_SERVER = os.environ.get('NEZHA_SERVER', '')|NEZHA_SERVER = os.environ.get('NEZHA_SERVER', '$NEZHA_SERVER_INPUT')|" main.py
+        
+        read -p "请输入哪吒端口 (v1版本留空): " NEZHA_PORT_INPUT
+        if [ -n "$NEZHA_PORT_INPUT" ]; then
+            sed -i "s|NEZHA_PORT = os.environ.get('NEZHA_PORT', '')|NEZHA_PORT = os.environ.get('NEZHA_PORT', '$NEZHA_PORT_INPUT')|" main.py
+        fi
+        
+        read -p "请输入哪吒密钥: " NEZHA_KEY_INPUT
+        if [ -n "$NEZHA_KEY_INPUT" ]; then
+            sed -i "s|NEZHA_KEY = os.environ.get('NEZHA_KEY', '')|NEZHA_KEY = os.environ.get('NEZHA_KEY', '$NEZHA_KEY_INPUT')|" main.py
+        fi
+        echo -e "${GREEN}哪吒配置已设置${NC}"
+    fi
+
+    # Argo固定隧道配置
+    read -p "请输入 Argo 固定隧道域名 (留空跳过): " ARGO_DOMAIN_INPUT
+    if [ -n "$ARGO_DOMAIN_INPUT" ]; then
+        sed -i "s|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '')|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '$ARGO_DOMAIN_INPUT')|" main.py
+        
+        read -p "请输入 Argo 固定隧道密钥: " ARGO_AUTH_INPUT
+        if [ -n "$ARGO_AUTH_INPUT" ]; then
+            sed -i "s|ARGO_AUTH = os.environ.get('ARGO_AUTH', '')|ARGO_AUTH = os.environ.get('ARGO_AUTH', '$ARGO_AUTH_INPUT')|" main.py
+        fi
+        echo -e "${GREEN}Argo固定隧道配置已设置${NC}"
+    fi
+
+    # Telegram配置
+    read -p "请输入 Telegram Bot Token (留空跳过): " BOT_TOKEN_INPUT
+    if [ -n "$BOT_TOKEN_INPUT" ]; then
+        sed -i "s|BOT_TOKEN = os.environ.get('BOT_TOKEN', '')|BOT_TOKEN = os.environ.get('BOT_TOKEN', '$BOT_TOKEN_INPUT')|" main.py
+        
+        read -p "请输入 Telegram Chat ID: " CHAT_ID_INPUT
+        if [ -n "$CHAT_ID_INPUT" ]; then
+            sed -i "s|CHAT_ID = os.environ.get('CHAT_ID', '')|CHAT_ID = os.environ.get('CHAT_ID', '$CHAT_ID_INPUT')|" main.py
+        fi
+        echo -e "${GREEN}Telegram配置已设置${NC}"
+    fi
+fi
+
+echo
+echo -e "${GREEN}配置完成！${NC}"
+echo -e "${BLUE}正在启动服务...${NC}"
+echo
+
+# 启动服务
+python3 main.py    echo "接下来，请输入您的配置信息。直接按[回车]将保留文件中的当前值。"
     
     cp "$APP_FILE" "${APP_FILE}.bak"
     echo "已创建原始文件备份: ${APP_FILE}.bak"
