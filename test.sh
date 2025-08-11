@@ -1,13 +1,18 @@
 #!/bin/bash
 
-#-----------------------------------------------------------------------------
-# Python 应用通用管理脚本 (Hugging Face 兼容中文版)
+# ===================================================================================
+# Python 应用一体化安装与管理脚本 (最终交互菜单版)
 #
-# 特性:
-#   - 兼容 Hugging Face Spaces 等轻量级、非完整的系统环境。
-#   - 首次运行全自动完成设置、配置、启动。
-#   - 后续运行提供管理菜单 (启动/停止/清理等)。
-#-----------------------------------------------------------------------------
+# 功能:
+#   - 首次运行：自动从GitHub下载、交互式配置并设置环境。
+#   - 后续运行：提供功能齐全的交互式菜单管理应用的启停、日志和卸载。
+#
+# 使用方法:
+#   1. 在一个空目录中，运行 bash <(curl -sL https://raw.githubusercontent.com/eoovve/vless/main/install.sh)
+#      或手动下载此脚本后运行: bash install.sh
+#   2. 根据首次运行的提示完成配置。
+#   3. 再次运行 bash install.sh 即可进入管理菜单。
+# ===================================================================================
 
 # --- 脚本配置 ---
 # 颜色代码
@@ -17,50 +22,226 @@ CYAN='\033[0;36m'
 RED='\033[0;31m'
 NC='\033[0m' # 无颜色
 
-# 文件和目录名称
+# 目标应用的GitHub Raw URL
+APP_URL="https://raw.githubusercontent.com/eooce/python-xray-argo/main/app.py"
+
+# 本地文件名及环境
 APP_FILE="app.py"
 REQ_FILE="requirements.txt"
 VENV_DIR="venv"
-ENV_FILE=".env"
 PID_FILE="app.pid"
 LOG_FILE="app.log"
 DEFAULT_CACHE_DIR="./.cache"
 
-
 # --- 核心功能函数 ---
 
-# 1. 检查系统依赖
+# 检查系统依赖
 check_dependencies() {
-    echo -e "${CYAN}:: 正在检查所需工具 (python3, pip)...${NC}"
+    echo -e "${CYAN}:: 正在检查所需工具 (curl, python3, pip)...${NC}"
     local missing=0
-    if ! command -v python3 &> /dev/null; then
-        echo -e "${RED}错误: 未找到 'python3'。请先安装 Python 3。${NC}"; missing=1;
-    fi
-    if ! command -v pip3 &> /dev/null; then
-        echo -e "${RED}错误: 未找到 'pip3'。请确保已为 Python 3 安装 pip。${NC}"; missing=1;
-    fi
-    if [ "$missing" -eq 1 ]; then
-        exit 1
-    fi
-    echo -e "${GREEN}✓ 所有必需工具都已安装。${NC}"
+    if ! command -v curl &> /dev/null; then echo -e "${RED}错误: 未找到 'curl'。${NC}"; missing=1; fi
+    if ! command -v python3 &> /dev/null; then echo -e "${RED}错误: 未找到 'python3'。${NC}"; missing=1; fi
+    if ! command -v pip3 &> /dev/null; then echo -e "${RED}错误: 未找到 'pip3'。${NC}"; missing=1; fi
+    [ "$missing" -eq 1 ] && echo -e "${RED}请先安装以上缺失的工具。${NC}" && exit 1
+    echo -e "${GREEN}✓ 依赖检查通过。${NC}"
 }
 
-# 2. 设置 Python 虚拟环境并安装依赖
-setup_environment() {
-    if [ ! -f "$REQ_FILE" ]; then
-        echo -e "${CYAN}:: 正在创建依赖文件 ${REQ_FILE}...${NC}"
-        echo "requests" > "$REQ_FILE"
-        echo -e "${GREEN}✓ ${REQ_FILE} 已创建。${NC}"
+# 下载 app.py
+download_app() {
+    echo -e "${CYAN}:: 正在从GitHub下载最新的 ${APP_FILE}...${NC}"
+    if curl -o "$APP_FILE" -L "$APP_URL"; then
+        echo -e "${GREEN}✓ ${APP_FILE} 下载成功。${NC}"
+    else
+        echo -e "${RED}✗ ${APP_FILE} 下载失败！请检查网络或URL: ${APP_URL}${NC}"
+        exit 1
     fi
+}
 
-    echo -e "${CYAN}:: 正在 './${VENV_DIR}' 目录中创建 Python 虚拟环境...${NC}"
-    python3 -m venv "$VENV_DIR"
+# 配置 app.py
+configure_app() {
+    echo -e "${CYAN}:: 启动应用配置向导...${NC}"
+    echo "接下来，请输入您的配置信息。直接按[回车]将保留文件中的当前值。"
     
-    echo -e "${CYAN}:: 正在从 ${REQ_FILE} 安装依赖库...${NC}"
-    # shellcheck source=/dev/null
+    cp "$APP_FILE" "${APP_FILE}.bak"
+    echo "已创建原始文件备份: ${APP_FILE}.bak"
+    echo
+
+    declare -A CONFIG_PROMPTS
+    CONFIG_PROMPTS=(
+        ["UUID"]="核心服务的UUID"
+        ["ARGO_DOMAIN"]="(可选) 您的Argo固定域名, 留空则使用临时域名"
+        ["ARGO_AUTH"]="(可选) 您的Argo密钥(Token或JSON), 留空则使用临时隧道"
+        ["ARGO_PORT"]="Argo隧道的内部端口"
+        ["CFIP"]="(可选) 优选IP或域名，用于加速"
+        ["CFPORT"]="优选IP的端口"
+        ["NAME"]="节点名称前缀"
+        ["PORT"]="HTTP服务端口"
+        ["SUB_PATH"]="订阅路径"
+        ["FILE_PATH"]="运行时目录, 一般无需修改"
+    )
+
+    for key in "${!CONFIG_PROMPTS[@]}"; do
+        desc=${CONFIG_PROMPTS[$key]}
+        current_val=$(grep "^${key} = " "$APP_FILE" | cut -d '=' -f 2- | xargs | tr -d "'\"")
+        read -p "$(echo -e ${GREEN}"-> 请输入 ${key} ${NC}(${desc}) [${current_val}]: ")" user_input
+        if [ -n "$user_input" ]; then
+            if [[ "$key" == "PORT" || "$key" == "ARGO_PORT" || "$key" == "CFPORT" ]]; then
+                sed -i "s/^\(${key} = \).*/\1${user_input}/" "$APP_FILE"
+            else
+                escaped_input=$(echo "$user_input" | sed "s/'/\\\'/g")
+                sed -i "s/^\(${key} = \).*/\1'${escaped_input}'/" "$APP_FILE"
+            fi
+            echo -e "   ${YELLOW}已将 ${key} 更新为: ${user_input}${NC}"
+        fi
+    done
+}
+
+# 设置 Python 虚拟环境
+setup_venv() {
+    echo -e "${CYAN}:: 正在设置Python运行环境...${NC}"
+    if [ ! -d "$VENV_DIR" ]; then
+        if [ ! -f "$REQ_FILE" ]; then echo "requests" > "$REQ_FILE"; fi
+        python3 -m venv "$VENV_DIR"
+        source "${VENV_DIR}/bin/activate"
+        pip install -r "$REQ_FILE"
+        deactivate
+        echo -e "${GREEN}✓ Python虚拟环境设置完成。${NC}"
+    else
+        echo -e "${YELLOW}虚拟环境已存在，跳过设置。${NC}"
+    fi
+}
+
+# 启动应用
+start_app() {
+    if [ -f "$PID_FILE" ]; then echo -e "${YELLOW}应用已在运行中。${NC}"; return; fi
+    echo -e "${CYAN}:: 正在启动应用...${NC}"
     source "${VENV_DIR}/bin/activate"
-    pip install -r "$REQ_FILE"
+    nohup python3 "$APP_FILE" > "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
     deactivate
+    sleep 2
+    if [ -f "$PID_FILE" ] && ps -p "$(cat $PID_FILE)" > /dev/null; then
+        echo -e "${GREEN}✓ 应用启动成功 (进程ID: $(cat $PID_FILE))。${NC}"
+    else
+        echo -e "${RED}✗ 应用启动失败。请通过菜单查看日志。${NC}"
+        rm -f "$PID_FILE"
+    fi
+}
+
+# 停止应用
+stop_app() {
+    echo -e "${CYAN}:: 正在停止所有相关进程...${NC}"
+    local stopped_count=0
+    if [ -f "$PID_FILE" ]; then
+        pid=$(cat "$PID_FILE")
+        if ps -p "$pid" > /dev/null; then kill -9 "$pid"; fi
+        rm -f "$PID_FILE"
+        echo "   - 主脚本 (进程ID: $pid) 已停止。"
+        stopped_count=$((stopped_count + 1))
+    fi
+    for proc_name in web bot npm php; do
+        pids_to_kill=$(ps -ef | grep "[${proc_name:0:1}]${proc_name:1}" | awk '{print $2}')
+        if [ -n "$pids_to_kill" ]; then
+            for pid in $pids_to_kill; do
+                kill -9 "$pid"
+                echo "   - 衍生进程 '$proc_name' (进程ID: $pid) 已停止。"
+                stopped_count=$((stopped_count + 1))
+            done
+        fi
+    done
+    if [ "$stopped_count" -eq 0 ]; then echo -e "${YELLOW}未发现正在运行的相关进程。${NC}"; else echo -e "${GREEN}✓ 所有相关进程均已停止。${NC}"; fi
+}
+
+# 查看日志
+view_logs() {
+    if [ ! -f "$LOG_FILE" ]; then
+        echo -e "${YELLOW}日志文件不存在。请先启动应用。${NC}"
+    else
+        clear
+        echo "正在显示实时日志... 按 Ctrl+C 组合键可随时退出。"
+        tail -f "$LOG_FILE"
+    fi
+}
+
+# 卸载
+uninstall_app() {
+    clear
+    echo -e "${RED}警告: 此操作将停止应用并永久删除所有相关文件！${NC}"
+    read -p "您确定要继续吗? [y/N]: " choice
+    if [[ "$choice" != "y" ]] && [[ "$choice" != "Y" ]]; then
+        echo "操作已取消。"
+    else
+        echo -e "${CYAN}:: 正在执行彻底清理...${NC}"
+        stop_app > /dev/null 2>&1
+        rm -rf "$VENV_DIR" "$DEFAULT_CACHE_DIR" "$APP_FILE" "${APP_FILE}.bak" "$REQ_FILE" "$LOG_FILE" "$PID_FILE"
+        echo -e "${GREEN}✓ 清理完成。${NC}"
+        echo "脚本将退出，您可以安全地删除此脚本文件。"
+        exit 0
+    fi
+}
+
+# 首次安装流程
+run_first_time_install() {
+    clear
+    echo -e "${CYAN}======================================================${NC}"
+    echo -e "${CYAN}    欢迎使用一体化安装程序    ${NC}"
+    echo -e "${CYAN}======================================================${NC}"
+    check_dependencies
+    download_app
+    configure_app
+    setup_venv
+    echo -e "\n${GREEN}====================== 安装配置完成 ======================${NC}"
+    echo -e "${GREEN}✓ 所有准备工作已就绪!${NC}"
+    echo
+    echo "现在，请再次运行此脚本以进入管理菜单:"
+    echo -e "${YELLOW}    bash install.sh${NC}"
+    echo "=========================================================="
+}
+
+# 主菜单
+main_menu() {
+    while true; do
+        clear
+        echo -e "${CYAN}=======================================${NC}"
+        echo -e "${CYAN}         应用管理菜单      ${NC}"
+        echo -e "${CYAN}=======================================${NC}"
+        echo -e " ${GREEN}1.${NC} ${CYAN}启动${NC} 应用服务"
+        echo -e " ${GREEN}2.${NC} ${RED}停止${NC} 应用服务"
+        echo -e " ${GREEN}3.${NC} 重启应用服务"
+        echo -e " ${GREEN}4.${NC} 查看实时日志"
+        echo -e " ${GREEN}5.${NC} 重新配置应用"
+        echo -e " ${GREEN}6.${NC} ${RED}卸载应用${NC}"
+        echo -e " ${YELLOW}7.${NC} 退出脚本"
+        echo
+        
+        if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null; then
+            echo -e "当前状态: ${GREEN}运行中 (进程ID: $(cat $PID_FILE))${NC}"
+        else
+            echo -e "当前状态: ${RED}已停止${NC}"
+        fi
+
+        read -p "请输入您的选择 [1-7]: " choice
+
+        case $choice in
+            1) start_app; read -p "按 [回车] 返回主菜单。" ;;
+            2) stop_app; read -p "按 [回车] 返回主菜单。" ;;
+            3) stop_app; sleep 1; start_app; read -p "按 [回车] 返回主菜单。" ;;
+            4) view_logs ;;
+            5) configure_app; echo -e "\n${GREEN}✓ 重新配置完成。如果应用正在运行，请重启以生效。${NC}"; read -p "按 [回车] 返回主菜单。" ;;
+            6) uninstall_app; ;;
+            7) exit 0 ;;
+            *) echo -e "${RED}无效输入，请重新选择。${NC}"; sleep 1 ;;
+        esac
+    done
+}
+
+# --- 脚本主入口 ---
+# 通过检查 app.py 是否存在来判断是首次运行还是后续管理
+if [ ! -f "$APP_FILE" ]; then
+    run_first_time_install
+else
+    main_menu
+fi    deactivate
     echo -e "${GREEN}✓ Python 环境设置完成。${NC}"
 }
 
