@@ -89,22 +89,36 @@ cp app.py app.py.backup
 echo -e "${YELLOW}已备份原始文件为 app.py.backup${NC}"
 
 if [ "$MODE_CHOICE" = "1" ]; then
-    echo -e "${BLUE}=== 极速模式 ===${NC}"
+    echo -e "${BLUE}=== 极速模式（固定隧道交互） ===${NC}"
     echo
-    
+
     echo -e "${YELLOW}当前UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)${NC}"
     read -p "请输入新的 UUID (留空自动生成): " UUID_INPUT
     if [ -z "$UUID_INPUT" ]; then
         UUID_INPUT=$(generate_uuid)
         echo -e "${GREEN}自动生成UUID: $UUID_INPUT${NC}"
     fi
-    
     sed -i "s/UUID = os.environ.get('UUID', '[^']*')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" app.py
     echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
-    
+
     sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', 'joeyblog.net')/" app.py
     echo -e "${GREEN}优选IP已自动设置为: joeyblog.net${NC}"
-    
+
+    # 新增 Argo 固定隧道交互
+    echo -e "${YELLOW}请输入 Argo 固定隧道域名（如：xxxx.cloudflareTunnel.com）:${NC}"
+    read -p "> " ARGO_DOMAIN_INPUT
+    if [ -n "$ARGO_DOMAIN_INPUT" ]; then
+        sed -i "s|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '[^']*')|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '$ARGO_DOMAIN_INPUT')|" app.py
+        echo -e "${GREEN}Argo 固定隧道域名已设置为: $ARGO_DOMAIN_INPUT${NC}"
+    fi
+
+    echo -e "${YELLOW}请输入 Argo 固定隧道密钥（如：xxxx:yyyy）:${NC}"
+    read -p "> " ARGO_AUTH_INPUT
+    if [ -n "$ARGO_AUTH_INPUT" ]; then
+        sed -i "s|ARGO_AUTH = os.environ.get('ARGO_AUTH', '[^']*')|ARGO_AUTH = os.environ.get('ARGO_AUTH', '$ARGO_AUTH_INPUT')|" app.py
+        echo -e "${GREEN}Argo 固定隧道密钥已设置为: $ARGO_AUTH_INPUT${NC}"
+    fi
+
     echo
     echo -e "${GREEN}极速配置完成！正在启动服务...${NC}"
     echo
